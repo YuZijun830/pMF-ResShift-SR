@@ -61,39 +61,46 @@ class SRDataset(Dataset):
             lr_img = hr_img.resize((lr_w, lr_h), resample=self.resample)
             lr_img = lr_img.resize((w, h), resample=self.resample)
 
-        # 3. 联合数据增强 (Joint Data Augmentation)
+        # 3. 转换为 Tensor (范围 [0, 1])
+        hr_tensor = self.to_tensor(hr_img)
+        lr_tensor = self.to_tensor(lr_img)
+
+        # 4. 联合数据增强 (Joint Data Augmentation)
         # 必须确保 HR 和 LR 裁剪的是同一个物理位置！
         i, j, h, w = transforms.RandomCrop.get_params(
-            self.to_tensor(hr_img),
+            hr_tensor,
             output_size=(self.patch_size, self.patch_size)
             )
-        hr_img = F.crop(self.to_tensor(hr_img),  i, j, h, w)
-        lr_img = F.crop(self.to_tensor(lr_img),  i, j, h, w)
+        hr_img = F.crop(hr_tensor,  i, j, h, w)
+        lr_img = F.crop(lr_tensor,  i, j, h, w)
 
         # 随机水平翻转 (概率 50%)
         if random.random() > 0.5:
-            hr_img = F.hflip(hr_img)
-            lr_img = F.hflip(lr_img)
+            hr_tensor = F.hflip(hr_tensor)
+            lr_tensor = F.hflip(lr_tensor)
             
         # 随机垂直翻转 (概率 50%)
         if random.random() > 0.5:
-            hr_img = F.vflip(hr_img)
-            lr_img = F.vflip(lr_img)
-
-        # 4. 转换为 Tensor (范围 [0, 1])
-        hr_tensor = self.to_tensor(hr_img)
-        lr_tensor = self.to_tensor(lr_img)
+            hr_tensor = F.vflip(hr_tensor)
+            lr_tensor = F.vflip(lr_tensor)
 
         # 5. 像素值归一化到 [-1, 1]
         # pMF 等扩散/流匹配模型通常在 [-1, 1] 空间训练表现更好
         hr_tensor = hr_tensor * 2.0 - 1.0
         lr_tensor = lr_tensor * 2.0 - 1.0
 
+        # 将最新的 torchvision 特殊子类强行转换为 numpy
+        # 斩断所有底层锁死的 Storage，再转回 torch.Tensor
+        # ==========================================
+        hr_pure = torch.from_numpy(hr_tensor.numpy().copy())
+        lr_pure = torch.from_numpy(lr_tensor.numpy().copy())
+
         # 返回一个字典，完美对接我们在 flow_matching.py 里的逻辑
         return {
-            'HR': hr_tensor,
-            'LR': lr_tensor
+            'HR': hr_pure,
+            'LR': lr_pure
         }
+
 
 # ==========================================
 # 简单的 DataLoader 包装函数 (供 train.py 调用)
