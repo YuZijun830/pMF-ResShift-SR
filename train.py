@@ -70,13 +70,15 @@ def main():
         batch_size=batch_size,
         num_workers=4
     )
+    if len(dataloader) == 0:
+        raise ValueError(f"DataLoader 为空！请检查 {hr_data_dir} 中是否有足够的图片（当前 batch_size={batch_size}，且启用了 drop_last=True）。")
 
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     # 使用余弦退火学习率，让训练后期更加平滑
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
     # 混合精度 Scaler
-    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
+    scaler = torch.GradScaler("cuda", enabled=amp_enabled)
 
     # ==========================================
     # 4. 核心训练循环 (Training Loop)
