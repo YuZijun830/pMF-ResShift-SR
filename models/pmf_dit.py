@@ -66,12 +66,12 @@ class DiTCrossBlock(nn.Module):
         
         # 1. Self-Attention 模块 (带有时间调制)
         x_modulated = modulate(self.norm1(x), shift_msa, scale_msa)
-        attn_out, _ = self.attn(x_modulated, x_modulated, x_modulated)
+        attn_out, _ = self.attn(x_modulated, x_modulated, x_modulated, need_weights=False)
         x = x + gate_msa.unsqueeze(1) * attn_out
         
         # 2. Cross-Attention 模块 (向 LR 图像查询信息)
         # Query: 当前图像; Key, Value: LR 图像特征 (context)
-        cross_out, _ = self.cross_attn(self.norm2(x), context, context)
+        cross_out, _ = self.cross_attn(self.norm2(x), context, context, need_weights=False)
         x = x + cross_out  # 此处也可以加 gate 参数，为保持简单我们使用残差
         
         # 3. MLP 模块 (带有时间调制)

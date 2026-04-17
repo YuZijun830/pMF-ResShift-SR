@@ -38,8 +38,10 @@ class LRConditioner(nn.Module):
         # 为了计算效率，我们可以在初始阶段先映射到一个较小的维度 (如 hidden_size // 4)
         cnn_dim = hidden_size // 4
         
-        # 1. 初始特征提取
-        self.init_conv = nn.Conv2d(in_channels, cnn_dim, kernel_size=3, padding=1)
+        # 1. 初始特征提取, 引入 stride=4 下采样
+        # 使得输出的特征图尺寸从 256x256 降维到 64x64
+        # 完美对齐 DiT 的 patch_size=4
+        self.init_conv = nn.Conv2d(in_channels, cnn_dim, kernel_size=4, stride=4, padding=0)
         
         # 2. 深度特征提取 (堆叠残差块)
         self.blocks = nn.Sequential(*[
