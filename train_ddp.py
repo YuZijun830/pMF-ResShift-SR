@@ -1,6 +1,6 @@
 # 用法示例：
 # CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train_ddp.py
-# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train_ddp.py --batch_size_per_gpu 8 --lr 2e-4 --epochs 200
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 train_ddp.py --batch_size_per_gpu 8 --lr 1e-4 --epochs 200
 # CUDA_VISIBLE_DEVICES=2,3,4,5 torchrun --nproc_per_node=4 train_ddp.py --batch_size_per_gpu 4 --save_every_epochs 20
 
 import os
@@ -36,7 +36,8 @@ def parse_args():
     parser.add_argument("--batch_size_per_gpu", type=int, default=4, help="每张卡的 batch size")
     parser.add_argument("--patch_size", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--lr", type=float, default=2e-4)
+    # 修改点 1：默认初始学习率稍微降至 1e-4，让大模型起步更稳
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--save_every_epochs", type=int, default=10)
     parser.add_argument("--num_workers", type=int, default=4)
 
@@ -101,7 +102,7 @@ def main():
 
     if is_main_process():
         current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        exp_name = f"run_{current_time}"
+        exp_name = f"run_{current_time}_BF16"
         exp_dir = os.path.join("./experiments", exp_name)
         ckpt_dir = os.path.join(exp_dir, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=True)
@@ -115,6 +116,7 @@ def main():
         logger.info(f"全局 Batch Size: {args.batch_size_per_gpu * world_size}")
         logger.info(f"学习率: {args.lr}")
         logger.info(f"训练轮数: {args.epochs}")
+        logger.info(f"混合精度: 开启 BF16 (BFloat16) 防止 NaN 溢出")
 
     # ==========================================
     # 2. 组装模型大厦
@@ -178,8 +180,7 @@ def main():
 
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
-    scaler = torch.GradScaler(enabled=amp_enabled)
-
+    
     # ==========================================
     # 4. 核心训练循环
     # ==========================================
@@ -207,8 +208,9 @@ def main():
 
                 optimizer.zero_grad(set_to_none=True)
 
+                # 修改点 3：强制 dtype 使用 torch.bfloat16
                 amp_ctx = (
-                    torch.autocast(device_type="cuda", dtype=torch.float16)
+                    torch.autocast(device_type="cuda", dtype=torch.bfloat16)
                     if amp_enabled
                     else nullcontext()
                 )
@@ -216,13 +218,12 @@ def main():
                 with amp_ctx:
                     loss = model(hr_img=hr_img, lr_img=lr_img)
 
-                scaler.scale(loss).backward()
-
-                scaler.unscale_(optimizer)
+                # 修改点 4：直接反向传播和更新，去掉了 scaler 的相关代码
+                loss.backward()
+                
+                # 依然保留梯度裁剪，防止偶尔的突刺导致网络崩溃
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
 
                 loss_value = loss.item()
                 current_lr = optimizer.param_groups[0]["lr"]
@@ -262,7 +263,6 @@ def main():
 
         if is_main_process():
             assert logger is not None
-
             logger.info("训练全部完成！")
             logger.close()
 
