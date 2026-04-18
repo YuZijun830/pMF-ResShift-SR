@@ -41,7 +41,9 @@ pMF-ResShift-SR/
 ```
 
 ## 🛠️ 环境安装
+```bash
 conda env create -f environment.yaml
+```
 
 ## 🚀 快速开始
 
