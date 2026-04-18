@@ -34,13 +34,14 @@ pMF-ResShift-SR/
 │   └── logger.py         # 综合日志器 (支持 TensorBoard 与文本记录)
 ├── experiments/          # 自动生成的实验结果、权重与日志
 ├── train.py              # 主训练脚本 (支持 AMP 混合精度与梯度裁剪)
+├── train_ddp.py          # 主训练脚本 (支持 Distribute Data Parallel )
 ├── sample.py             # 推理脚本 (单图测试入口)
 ├── environment.yaml      # 配置环境
 └── README.md
 ```
 
 ## 🛠️ 环境安装
-conda install -r environment.yaml
+conda env create -f environment.yaml
 
 ## 🚀 快速开始
 
@@ -49,9 +50,14 @@ conda install -r environment.yaml
 将你的高清原图（Ground Truth）放入 `data/train_hr` 目录下。代码会自动进行双三次插值降质生成对应的低清图像。
 
 ### 2\. 模型训练
-
+单卡
 ```bash
 python train.py
+```
+
+多卡
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 train_ddp.py --batch_size_per_gpu 4 --lr 1e-4 --epochs 200
 ```
 
 训练过程中的 Loss 曲线和学习率变化将自动保存至 `./experiments/run_TIMESTAMP/` 目录下。你可以通过 TensorBoard 实时查看：
@@ -62,7 +68,7 @@ tensorboard --logdir=./experiments
 
 ### 3\. 执行推理
 
-准备一张低分辨率测试图 `test_lr.png`，运行：
+准备一张低分辨率测试图 `./test/test_lr.png`，运行：
 
 ```bash
 python sample.py
