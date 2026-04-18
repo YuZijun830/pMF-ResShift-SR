@@ -40,12 +40,12 @@ def main():
     # ==========================================
     # 2. 超参数与配置
     # ==========================================
-    hr_data_dir = "./data/train_hr"  
+    hr_data_dir = "./data/DIV2K/DIV2K_train_HR_sub"  
     lr_data_dir = None               # 如果没有现成的 LR，设为 None 自动生成
     
     batch_size = 4         # 根据显存随时调整
     patch_size = 256       
-    epochs = 500
+    epochs = 300
     learning_rate = 2e-4
     save_every_epochs = 10 
 
