@@ -208,10 +208,13 @@ __marimo__/
 
 # model output
 checkpoints/
+experiments/
+test/
+results/
 
 # data
 data/train_hr/
 data/DIV2K/
+data/benchmark/
 
 
-experiments/
