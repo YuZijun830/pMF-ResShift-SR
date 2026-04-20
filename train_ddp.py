@@ -36,7 +36,6 @@ def parse_args():
     parser.add_argument("--batch_size_per_gpu", type=int, default=4, help="每张卡的 batch size")
     parser.add_argument("--patch_size", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=300)
-    # 修改点 1：默认初始学习率稍微降至 1e-4，让大模型起步更稳
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--save_every_epochs", type=int, default=10)
     parser.add_argument("--num_workers", type=int, default=4)
@@ -179,7 +178,10 @@ def main():
         )
 
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    
+    # 核心修复 1：计算整个训练过程的总 Iteration 数量
+    total_steps = len(dataloader) * args.epochs
+    scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
     
     # ==========================================
     # 4. 核心训练循环
@@ -208,7 +210,6 @@ def main():
 
                 optimizer.zero_grad(set_to_none=True)
 
-                # 修改点 3：强制 dtype 使用 torch.bfloat16
                 amp_ctx = (
                     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
                     if amp_enabled
@@ -218,12 +219,12 @@ def main():
                 with amp_ctx:
                     loss = model(hr_img=hr_img, lr_img=lr_img)
 
-                # 修改点 4：直接反向传播和更新，去掉了 scaler 的相关代码
                 loss.backward()
-                
-                # 依然保留梯度裁剪，防止偶尔的突刺导致网络崩溃
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
+                
+                # 核心修复 2：把 scheduler.step() 放到 Iteration 循环内部
+                scheduler.step()
 
                 loss_value = loss.item()
                 current_lr = optimizer.param_groups[0]["lr"]
@@ -234,8 +235,6 @@ def main():
                         "Loss": f"{loss_value:.4f}",
                         "LR": f"{current_lr:.2e}"
                     })
-
-            scheduler.step()
 
             # 聚合所有进程的 epoch_loss
             loss_tensor = torch.tensor(epoch_loss, dtype=torch.float32, device=device)
@@ -249,6 +248,7 @@ def main():
                 assert logger is not None
                 assert ckpt_dir is not None
 
+                # 取最后一个 batch 的 learning rate 作为该 epoch 的记录
                 logger.info(f"Epoch {epoch} 结束 | 平均 Loss: {avg_epoch_loss:.6f} | LR: {current_lr:.2e}")
 
                 logger.log_metrics({

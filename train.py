@@ -22,7 +22,7 @@ def main():
     # ==========================================
     # 生成时间戳 (例如: 20260417_153022)
     current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    exp_name = f"run_{current_time}"
+    exp_name = f"run_{current_time}_SingleGPU_BF16"
     
     # 实验主目录设为 ./experiments/run_xxx/
     exp_dir = os.path.join("./experiments", exp_name)
@@ -34,7 +34,7 @@ def main():
     
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     amp_enabled = device.type == "cuda"
-    logger.info(f"启动 pMF-ResShift 训练流程 | 运行设备: {device}")
+    logger.info(f"启动 pMF-ResShift 单卡训练流程 | 运行设备: {device}")
     logger.info(f"本次实验目录: {exp_dir}")
 
     # ==========================================
@@ -46,7 +46,7 @@ def main():
     batch_size = 4         # 根据显存随时调整
     patch_size = 256       
     epochs = 300
-    learning_rate = 2e-4
+    learning_rate = 1e-4   # 初始学习率与 DDP 保持一致，稳妥起步
     save_every_epochs = 10 
 
     # 模型架构参数
@@ -80,11 +80,10 @@ def main():
         raise ValueError(f"DataLoader 为空！请检查 {hr_data_dir} 中是否有足够的图片（当前 batch_size={batch_size}，且启用了 drop_last=True）。")
 
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    # 使用余弦退火学习率，让训练后期更加平滑
-    scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
-
-    # 混合精度 Scaler
-    scaler = torch.GradScaler("cuda", enabled=amp_enabled)
+    
+    # 修改点 1：精确计算总 iteration 步数，传入 T_max
+    total_steps = len(dataloader) * epochs
+    scheduler = CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
 
     # ==========================================
     # 5. 核心训练循环
@@ -104,28 +103,27 @@ def main():
 
             optimizer.zero_grad(set_to_none=True)
 
-            # CUDA 上开启 AMP；CPU 上退化为普通上下文
+            # 修改点 2：单卡也标配 BFloat16 混合精度，防 NaN 且无需 Scaler
             amp_ctx = (
-                torch.autocast(device_type="cuda", dtype=torch.float16)
+                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
                 if amp_enabled
                 else nullcontext()
             )
 
             with amp_ctx:
-                # 这里的 forward 会自动构建 z_t 轨迹并计算 MSE Loss
                 loss = model(hr_img=hr_img, lr_img=lr_img)
 
-            # 缩放 Loss 并反向传播
-            scaler.scale(loss).backward()
+            # 直接反向传播
+            loss.backward()
 
             # 梯度裁剪 (防止梯度爆炸)
-            # 先 unscale，然后再裁剪
-            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             # 更新权重
-            scaler.step(optimizer)
-            scaler.update()
+            optimizer.step()
+            
+            # 修改点 3：把 scheduler.step() 放入 Batch 循环内部
+            scheduler.step()
 
             # 记录日志
             loss_value = loss.item()
@@ -136,8 +134,6 @@ def main():
                 "Loss": f"{loss_value:.4f}",
                 "LR": f"{current_lr:.2e}"
             })
-        
-        scheduler.step()
         
         # 计算并记录当前 Epoch 的平均 Loss
         avg_epoch_loss = epoch_loss / len(dataloader)
